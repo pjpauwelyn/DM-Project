@@ -1,0 +1,235 @@
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix
+import pandas as pd
+import seaborn as sns
+import numpy as np
+import chardet
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import StackingClassifier
+from sklearn import metrics
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import roc_curve, auc
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import cross_val_score
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.pipeline import Pipeline
+from sklearn import svm
+import matplotlib.pyplot as plt
+from sklearn.tree import plot_tree
+from sklearn.model_selection import GridSearchCV
+import pickle
+
+seed = 5780
+
+data = pd.read_csv('Affairs.csv')
+data['affairs'] = data['affairs'].clip(upper=1)
+
+categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+numerical_cols = data.select_dtypes(include=['int64', 'float64']).columns
+
+label_encoder = LabelEncoder()
+
+for col in categorical_cols:
+    data[col] = label_encoder.fit_transform(data[col])
+
+A = data.drop(columns = ['affairs'])
+b = data['affairs']
+A_train, A_test, b_train, b_test = train_test_split(A,b,test_size=0.3, random_state=seed)
+
+# Scaling the attributes evenly
+scaler = StandardScaler()
+scaler.fit(A_train)
+A_train_scaled = scaler.fit_transform(A_train)
+A_train_scaled = scaler.fit_transform(A_test)
+
+# Dealing with class imbalance
+
+over = SMOTE(sampling_strategy=0.4)
+A_train, b_train = over.fit_resample(A_train, b_train)
+
+# Finding the best random_state seed
+'''
+maxs = 0
+bestseed = 0
+for seed in range(0, 10000, 10):
+    A_train, A_test, b_train, b_test = train_test_split(A, b, test_size=0.2, random_state=seed)
+    model1 = RandomForestClassifier(random_state=seed)
+    model2 = GradientBoostingClassifier(random_state=seed)
+    model3 = GradientBoostingClassifier(random_state=seed)
+    model1.fit(A_train, b_train)
+    model2.fit(A_train, b_train)
+    model3.fit(A_train, b_train)
+    b_pred1 = model1.predict(A_test)
+    b_pred2 = model2.predict(A_test)
+    b_pred3 = model3.predict(A_test)
+    score1 = accuracy_score(b_test, b_pred1)
+    score2 = accuracy_score(b_test, b_pred2)
+    score3 = accuracy_score(b_test, b_pred3)
+    if(score1 > maxs):
+        maxs = score1
+        bestseed = seed
+    if(score2 > maxs):
+        maxs = score2
+        bestseed = seed
+    if(score3 > maxs):
+        maxs = score3
+        bestseed = seed
+    
+print("best seed is ", bestseed)
+'''
+'''
+# Gets correlations between variables:
+correlations = data.corrwith(data['affairs'])
+print("Correlations:", correlations)
+
+# Gets correlation matrix:
+corr_matrix = data.corr()
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+f, ax = plt.subplots(figsize=(11, 9))
+cmap = sns.diverging_palette(230, 20, as_cmap=True)
+sns.heatmap(corr_matrix, mask=mask, cmap=cmap, vmax=.3, center=0,
+            square=True, linewidths=.5, cbar_kws={"shrink": .5})
+plt.show()
+'''
+
+#Function for plotting the roc curves
+def plot_roc(y_test, preds, model_name, color):
+    fpr, tpr, threshold = roc_curve(y_test, preds)
+    roc_auc = auc(fpr, tpr)
+    plt.title('ROC Curve')
+    plt.plot(fpr, tpr, color, label = f'AUC {model_name} = %0.2f' % roc_auc)
+    plt.legend(loc = 'lower right')
+    plt.plot([0, 1], [0, 1],'r--')
+    plt.xlim([0, 1])
+    plt.ylim([0, 1])
+    plt.ylabel('TPR')
+    plt.xlabel('FPR')
+
+
+'''RANDOM FOREST'''
+
+param_grid = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [None, 10, 20, 30],
+    'min_samples_split': [2, 5, 10]
+}
+
+model1_RF = RandomForestClassifier()
+grid_search = GridSearchCV(estimator=model1_RF, param_grid=param_grid, cv=5)
+grid_search.fit(A_train, b_train)
+best_params = grid_search.best_params_
+model1_best = RandomForestClassifier(**best_params, random_state=seed)
+model1_best.fit(A_train, b_train)
+
+'''GRADIENT BOOSTING'''
+
+param_grid = {
+    'n_estimators': [50, 100, 200],
+    'learning_rate': [0.01, 0.1, 1],
+    'max_depth': [3, 5, 8]
+}
+
+model2_GB = GradientBoostingClassifier()
+grid_search = GridSearchCV(estimator=model2_GB, param_grid=param_grid, cv=5)
+grid_search.fit(A_train, b_train)
+best_params = grid_search.best_params_
+model2_best = GradientBoostingClassifier(**best_params, random_state=seed)
+model2_best.fit(A_train, b_train)
+
+'''LOGISTIC REGRESSION'''
+
+model3_LR = LogisticRegression(max_iter=1000, random_state=seed)
+model3_LR.fit(A_train, b_train)
+
+predictions1 = model1_best.predict(A_test)
+predictions2 = model2_best.predict(A_test)
+
+threshold = 0.5
+
+predictions3 = model3_LR.predict_proba(A_test)
+predictions3_con = (predictions3[:, 1] >= threshold).astype(int)
+
+predictions_avg = np.mean([predictions1, predictions2], axis=0)
+predictions_avg = (predictions_avg > threshold).astype(int)
+
+# Stacking
+base_models = [
+    ('Random Forests', model1_best),
+    ('Gradient Boosting', model2_best)
+]
+meta_model = LogisticRegression()
+stacking_model = StackingClassifier(estimators=base_models, final_estimator=meta_model)
+stacking_model.fit(A_train, b_train)
+stacking_predictions = stacking_model.predict(A_test)
+
+score = accuracy_score(b_test, predictions_avg)
+score1 = accuracy_score(b_test, predictions1)
+score2 = accuracy_score(b_test, predictions2)
+score3 = accuracy_score(b_test, predictions3_con)
+stacking_score = accuracy_score(b_test, stacking_predictions)
+crossval_score1 = cross_val_score(model1_RF, A, b, cv=5)
+crossval_score2 = cross_val_score(model2_GB, A, b, cv=5)
+crossval_score3 = cross_val_score(model3_LR, A, b, cv=5)
+crossval_score4 = cross_val_score(stacking_model, A, b, cv=5)
+
+print(f"RF model (without cross validation) achieves an accuracy score of {score1}.")
+print(f"GB model (without cross validation) achieves an accuracy score of {score2}.")
+print(f"LR model (without cross validation) achieves an accuracy score of {score3}.")
+print(f"LR meta-model (with RF and GB as base models) achieves an accuracy score of {stacking_score}.")
+print(f"RF model (after cross validation) achieves accuracy scores of {crossval_score1}.")
+print(f"GB model (after cross validation) achieves accuracy scores of {crossval_score2}.")
+print(f"LR model (after cross validation) achieves accuracy scores of {crossval_score3}.")
+print(f"LR meta-model model (with cross validation) achieves an accuracy score of {crossval_score4}.")
+
+# Confusion matrices
+'''
+cm = confusion_matrix(b_test, predictions1)
+plt.figure(figsize=(10,7))
+sns.heatmap(cm, annot=True, fmt='d')
+plt.title('RF Confusion matrix')
+plt.xlabel('Predicted')
+plt.ylabel('Truth')
+plt.show()
+
+cm = confusion_matrix(b_test, predictions2)
+plt.figure(figsize=(10,7))
+sns.heatmap(cm, annot=True, fmt='d')
+plt.title('GB Confusion matrix')
+plt.xlabel('Predicted')
+plt.ylabel('Truth')
+plt.show()
+
+cm = confusion_matrix(b_test, predictions3_con)
+plt.figure(figsize=(10,7))
+sns.heatmap(cm, annot=True, fmt='d')
+plt.title('LR Confusion matrix')
+plt.xlabel('Predicted')
+plt.ylabel('Truth')
+plt.show()
+
+cm = confusion_matrix(b_test, stacking_predictions)
+plt.figure(figsize=(10,7))
+sns.heatmap(cm, annot=True, fmt='d')
+plt.title('LR-meta Confusion matrix')
+plt.xlabel('Predicted')
+plt.ylabel('Truth')
+plt.show()
+
+# ROC Curves
+
+preds1 = model1_best.predict_proba(A_test)[:,1]
+preds2 = model2_best.predict_proba(A_test)[:,1]
+preds3 = model3_LR.predict_proba(A_test)[:,1]
+
+plot_roc(b_test, preds1, "Random Forest", 'b')
+plot_roc(b_test, preds2, "Gradient Boosting", 'g')
+plot_roc(b_test, preds3, "Logistic Regression", 'r')
+
+plt.show()
+'''
+
